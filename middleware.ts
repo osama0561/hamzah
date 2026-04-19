@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-const PUBLIC_PATHS = ["/login", "/api/auth"];
+const PUBLIC_PATHS = ["/login", "/api/auth", "/landing"];
 const DEVICE_COOKIE = "hamzah_device_id";
 const DENIED_MSG = "الوصول غير مسموح به.";
 
@@ -62,11 +62,12 @@ function timeAllowed(): boolean {
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Always enforce IP + time on every non-auth-callback route.
+  // Public routes (landing page, auth endpoints) bypass every gate.
+  if (isPublic(pathname)) return NextResponse.next();
+
+  // Everything else is internal: IP allowlist + Asia/Riyadh time window first.
   if (!ipAllowed(req)) return deny();
   if (!timeAllowed()) return deny();
-
-  if (isPublic(pathname)) return NextResponse.next();
 
   const token = await getToken({
     req,
