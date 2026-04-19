@@ -71,20 +71,23 @@ export default function ResultsPanel({ result }: { result: CalculationResult }) 
 
       <Card title="التمويل الشخصي">
         <Row
-          label="نسبة الخصم"
+          label="نسبة الاستقطاع الشخصي"
           value={formatPercent(personal.deductionRate)}
         />
         <Row
-          label="القسط الشهري"
+          label="القسط الشخصي الشهري"
           value={`${formatSAR(personal.installment)} ريال`}
         />
-        <Row label="الإجمالي" value={`${formatSAR(personal.grossTotal)} ريال`} />
         <Row
-          label="ربح البنك"
+          label="قيمة التمويل الشخصي مع الأرباح"
+          value={`${formatSAR(personal.grossTotal)} ريال`}
+        />
+        <Row
+          label="قيمة الأرباح البنكية للشخصي"
           value={`${formatSAR(personal.bankProfit)} ريال`}
         />
         <Row
-          label="صافي التمويل للعميل"
+          label="قيمة التمويل الشخصي الصافية"
           value={`${formatSAR(personal.netToCustomer)} ريال`}
           emphasize
         />

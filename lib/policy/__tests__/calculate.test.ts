@@ -104,11 +104,18 @@ describe("calculate — validation & edge cases", () => {
     expect(res.validation.ok).toBe(false);
   });
 
-  it("flags DIRECT_TO_RETIREMENT as an edge case warning", () => {
+  it("DIRECT_TO_RETIREMENT: no merged phase, personal at 25% over remaining months", () => {
     // Age 59 -> 1 year remaining = 12 months <= 18
     const res = calculate({ ...ceoCase, birthYear: 1447 - 59 });
     expect(res.validation.warnings.join(" ")).toMatch(/حافة/);
     expect(res.phases.merged.exists).toBe(false);
+    // Personal must be 25% × 12 months, per policy: "يحسب له شخصي باستقطاع 25% شخصي".
+    expect(res.personal.deductionRate).toBeCloseTo(0.25, 5);
+    expect(res.personal.installment).toBeCloseTo(15000 * 0.25, 1);
+    expect(res.personal.grossTotal).toBeCloseTo(15000 * 0.25 * 12, 1);
+    // Post-retirement takes the full 25-year cap since merged + pre = 0.
+    expect(res.phases.postRetirement.years).toBe(25);
+    expect(res.phases.postRetirement.months).toBe(300);
   });
 
   it("applies low-salary ceiling (0.55) when net < 15,000", () => {

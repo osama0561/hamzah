@@ -25,13 +25,18 @@ export function mergedPhase(input: CalculationInput): {
   personalRate: number;
   realEstateCeiling: number;
   realEstateRateDuringMerge: number;
+  personalMonths: number;
 } {
-  const { remainingYearsToRetirement } = computeDerived(input);
-  const personalRate = personalDeductionRateFor(input.status);
+  const { remainingYearsToRetirement, remainingMonthsToRetirement } =
+    computeDerived(input);
   const realEstateCeiling = realEstateCeilingFor(input.netSalary);
 
-  const exists = remainingYearsToRetirement * 12 > POLICY.DIRECT_RETIREMENT_THRESHOLD_MONTHS;
+  const exists =
+    remainingMonthsToRetirement > POLICY.DIRECT_RETIREMENT_THRESHOLD_MONTHS;
   if (!exists) {
+    // Direct-to-retirement path: no merged real-estate phase, and personal
+    // loan is computed at the retired rate (25%) over whatever remains until
+    // retirement — per spec: "يحسب له شخصي باستقطاع 25% شخصي".
     return {
       phase: {
         exists: false,
@@ -39,14 +44,16 @@ export function mergedPhase(input: CalculationInput): {
         years: 0,
         totalInstallments: 0,
         reason:
-          "لا يوجد مرحلة دمج — المتبقي للتقاعد 18 شهرًا أو أقل، يذهب العميل مباشرة لمرحلة التقاعد.",
+          "لا توجد مرحلة دمج — المتبقي للتقاعد 18 شهرًا أو أقل، ينتقل العميل مباشرة لمرحلة التقاعد ويُحسب الشخصي باستقطاع 25٪.",
       },
-      personalRate,
+      personalRate: POLICY.PERSONAL_DEDUCTION_RATE_RETIRED,
       realEstateCeiling,
       realEstateRateDuringMerge: 0,
+      personalMonths: remainingMonthsToRetirement,
     };
   }
 
+  const personalRate = personalDeductionRateFor(input.status);
   const mergedYears = Math.min(
     remainingYearsToRetirement,
     POLICY.MAX_MERGED_YEARS,
@@ -72,6 +79,7 @@ export function mergedPhase(input: CalculationInput): {
     personalRate,
     realEstateCeiling,
     realEstateRateDuringMerge,
+    personalMonths: mergedMonths,
   };
 }
 
@@ -97,9 +105,23 @@ export function preRetirementPhase(
   input: CalculationInput,
   mergedYears: number,
   realEstateCeiling: number,
+  mergedExists: boolean,
 ): PhaseResult {
   const { remainingYearsToRetirement } = computeDerived(input);
   const remainingAfterMerge = remainingYearsToRetirement - mergedYears;
+
+  // Direct-to-retirement path: spec says the customer goes straight to
+  // post-retirement — no interim phase.
+  if (!mergedExists) {
+    return {
+      exists: false,
+      months: 0,
+      years: 0,
+      totalInstallments: 0,
+      reason:
+        "لا توجد مرحلة ثانية — المسار المباشر للتقاعد يتجاوز المرحلة الثانية.",
+    };
+  }
 
   if (remainingAfterMerge < 1) {
     return {

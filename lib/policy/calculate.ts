@@ -122,12 +122,13 @@ export function calculate(input: CalculationInput): CalculationResult {
   const personal = personalLoan(
     input,
     mergedInfo.personalRate,
-    mergedInfo.phase.months,
+    mergedInfo.personalMonths,
   );
   const preRet = preRetirementPhase(
     input,
     mergedYears,
     mergedInfo.realEstateCeiling,
+    mergedInfo.phase.exists,
   );
   const postRet = postRetirementPhase(input, mergedYears, preRet.years);
 
