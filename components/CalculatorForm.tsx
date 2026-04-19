@@ -1,8 +1,10 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
+import { convertYear, type Calendar } from "@/lib/calendar";
 import type { CalculationInput } from "@/lib/policy/types";
 
 const schema = z.object({
@@ -28,9 +30,12 @@ export default function CalculatorForm({
   onSubmit: (input: CalculationInput) => void;
   defaults?: Partial<FormValues>;
 }) {
+  const [calendar, setCalendar] = useState<Calendar>("hijri");
   const {
     register,
     handleSubmit,
+    getValues,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -47,13 +52,33 @@ export default function CalculatorForm({
     },
   });
 
+  function switchCalendar(next: Calendar) {
+    if (next === calendar) return;
+    const v = getValues();
+    setValue("birthYear", convertYear(Number(v.birthYear), calendar, next), {
+      shouldValidate: true,
+    });
+    setValue("hireYear", convertYear(Number(v.hireYear), calendar, next), {
+      shouldValidate: true,
+    });
+    setValue(
+      "currentYear",
+      convertYear(Number(v.currentYear), calendar, next),
+      { shouldValidate: true },
+    );
+    setCalendar(next);
+  }
+
   function submit(values: FormValues) {
     onSubmit(values as CalculationInput);
   }
 
   return (
     <form onSubmit={handleSubmit(submit)} className="space-y-6">
-      <Section title="بيانات العميل">
+      <Section
+        title="بيانات العميل"
+        right={<CalendarToggle value={calendar} onChange={switchCalendar} />}
+      >
         <Field label="سنة الميلاد" error={errors.birthYear?.message}>
           <input type="number" className={FIELD_CLS} {...register("birthYear")} />
         </Field>
@@ -67,6 +92,9 @@ export default function CalculatorForm({
             {...register("currentYear")}
           />
         </Field>
+        <div className="sm:col-span-2">
+          <YearConverter currentCalendar={calendar} />
+        </div>
       </Section>
 
       <Section title="البيانات المالية">
@@ -130,16 +158,108 @@ export default function CalculatorForm({
   );
 }
 
+function CalendarToggle({
+  value,
+  onChange,
+}: {
+  value: Calendar;
+  onChange: (c: Calendar) => void;
+}) {
+  const base =
+    "px-3 py-1 text-xs font-bold rounded-md transition border";
+  const on = "bg-navy text-white border-navy";
+  const off =
+    "bg-white text-navy-700/70 border-navy-900/10 hover:border-navy-900/30";
+  return (
+    <div
+      role="radiogroup"
+      aria-label="نوع التقويم"
+      className="flex items-center gap-1 p-1 rounded-lg bg-white border border-navy-900/10"
+    >
+      <button
+        type="button"
+        role="radio"
+        aria-checked={value === "hijri"}
+        onClick={() => onChange("hijri")}
+        className={`${base} ${value === "hijri" ? on : off}`}
+      >
+        هجري
+      </button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={value === "gregorian"}
+        onClick={() => onChange("gregorian")}
+        className={`${base} ${value === "gregorian" ? on : off}`}
+      >
+        ميلادي
+      </button>
+    </div>
+  );
+}
+
+function YearConverter({ currentCalendar }: { currentCalendar: Calendar }) {
+  const [from, setFrom] = useState<Calendar>(
+    currentCalendar === "hijri" ? "gregorian" : "hijri",
+  );
+  const [year, setYear] = useState<string>("");
+  const parsed = Number(year);
+  const valid = year !== "" && Number.isFinite(parsed) && parsed >= 1 && parsed <= 3000;
+  const to: Calendar = from === "hijri" ? "gregorian" : "hijri";
+  const result = valid ? convertYear(parsed, from, to) : null;
+  const toLabel = to === "hijri" ? "هجري" : "ميلادي";
+
+  return (
+    <details className="rounded-xl border border-dashed border-navy-900/15 bg-white px-4 py-3 text-sm">
+      <summary className="cursor-pointer list-none flex items-center justify-between font-medium text-navy">
+        <span>تحويل سريع بين التقويمين</span>
+        <span className="text-xs text-navy-700/60">
+          اعرف السنة بالتقويم الآخر
+        </span>
+      </summary>
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-[auto_1fr_auto] gap-2 items-center">
+        <select
+          value={from}
+          onChange={(e) => setFrom(e.target.value as Calendar)}
+          className={FIELD_CLS}
+        >
+          <option value="hijri">من هجري</option>
+          <option value="gregorian">من ميلادي</option>
+        </select>
+        <input
+          type="number"
+          inputMode="numeric"
+          placeholder="أدخل السنة"
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          className={FIELD_CLS}
+        />
+        <div
+          className="px-3 py-2 rounded-md bg-surface text-navy font-bold min-w-[110px] text-center"
+          aria-live="polite"
+        >
+          {result !== null ? `${result} ${toLabel}` : "—"}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function Section({
   title,
+  right,
   children,
 }: {
   title: string;
+  right?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="rounded-2xl bg-surface p-5">
-      <h3 className="text-sm font-bold text-navy mb-4">{title}</h3>
+      <div className="flex items-center justify-between mb-4 gap-3">
+        <h3 className="text-sm font-bold text-navy">{title}</h3>
+        {right}
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">{children}</div>
     </div>
   );
