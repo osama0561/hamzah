@@ -15,12 +15,20 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         const seedEmail = process.env.SEED_USER_EMAIL;
+        const seedPassword = process.env.SEED_USER_PASSWORD;
         const seedHash = process.env.SEED_USER_PASSWORD_HASH;
-        if (!seedEmail || !seedHash) return null;
+        if (!seedEmail) return null;
+        if (!seedPassword && !seedHash) return null;
         if (!credentials?.email || !credentials.password) return null;
-        if (credentials.email.toLowerCase() !== seedEmail.toLowerCase())
+        if (credentials.email.trim().toLowerCase() !== seedEmail.trim().toLowerCase())
           return null;
-        const ok = await bcrypt.compare(credentials.password, seedHash);
+
+        let ok = false;
+        if (seedPassword) {
+          ok = credentials.password === seedPassword;
+        } else if (seedHash) {
+          ok = await bcrypt.compare(credentials.password, seedHash);
+        }
         if (!ok) return null;
         return { id: seedEmail, email: seedEmail, name: "Hamzah User" };
       },
