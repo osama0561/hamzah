@@ -1,17 +1,17 @@
 import { POLICY } from "./constants";
-import { computeDerived, realEstateCeilingFor } from "./derived";
+import { computeDerived } from "./derived";
 import {
-  mergedPhase,
-  personalLoan,
-  postRetirementPhase,
-  preRetirementPhase,
-  routingPath,
+  computeStage1,
+  computeStage2,
+  computeStage3,
 } from "./stages";
-import type {
-  CalculationInput,
-  CalculationResult,
-  PhaseResult,
-} from "./types";
+import { aggregateCommitments } from "./commitments";
+import {
+  aggregateSuspensions,
+  computeCoverage,
+} from "./suspensions";
+import { computeSurplus } from "./surplus";
+import type { CalculationInput, CalculationResult } from "./types";
 
 function validate(input: CalculationInput): {
   errors: string[];
@@ -20,161 +20,195 @@ function validate(input: CalculationInput): {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  if (input.birthYear >= input.currentYear)
-    errors.push("سنة الميلاد يجب أن تكون قبل السنة الحالية.");
-  if (input.hireYear > input.currentYear)
-    errors.push("سنة التعيين يجب ألا تتجاوز السنة الحالية.");
-  if (input.hireYear <= input.birthYear)
-    errors.push("سنة التعيين يجب أن تكون بعد سنة الميلاد.");
-  else if (input.hireYear - input.birthYear < 15)
-    warnings.push("عمر التعيين يبدو أقل من 15 سنة — يرجى التحقق.");
-  if (input.basicSalary <= 0) errors.push("الراتب الأساسي يجب أن يكون أكبر من صفر.");
-  if (input.netSalary <= 0) errors.push("صافي الراتب يجب أن يكون أكبر من صفر.");
-  if (input.conversionFactor <= 0)
+  const currentYear =
+    Number(input.currentYear) || new Date().getFullYear();
+  const birthYear = Number(input.birthYear) || 0;
+  const hireYear = Number(input.hireYear) || 0;
+  const basicSalary = Number(input.basicSalary) || 0;
+  const netSalary = Number(input.netSalary) || 0;
+  const conversionFactor = Number(input.conversionFactor) || 0;
+
+  if (basicSalary <= 0)
+    errors.push("الراتب الأساسي مطلوب وأكبر من صفر.");
+  if (netSalary <= 0) errors.push("الراتب الصافي مطلوب وأكبر من صفر.");
+  if (birthYear > 0 && birthYear >= currentYear)
+    errors.push("سنة الميلاد يجب أن تسبق السنة الحالية.");
+  if (hireYear > 0 && hireYear > currentYear)
+    errors.push("سنة التعيين لا يمكن أن تكون في المستقبل.");
+  if (conversionFactor <= 0)
     errors.push("معامل التحويل يجب أن يكون أكبر من صفر.");
-  if (input.basicSalary > 0 && input.netSalary > input.basicSalary * 2)
-    warnings.push("صافي الراتب يبدو أكبر من ضعف الأساسي — يرجى التحقق.");
-  if (input.status === "retired")
-    errors.push("المتقاعد خارج نطاق النسخة التجريبية.");
+
+  if (
+    hireYear > 0 &&
+    birthYear > 0 &&
+    hireYear - birthYear < 18
+  ) {
+    warnings.push("فارق غير منطقي بين الميلاد والتعيين (<18 سنة).");
+  }
+
+  if (
+    basicSalary > 0 &&
+    netSalary > 0 &&
+    netSalary > basicSalary * 3
+  ) {
+    warnings.push("صافي الراتب يبدو أكبر من ثلاثة أضعاف الأساسي — يرجى التحقق.");
+  }
 
   return { errors, warnings };
 }
 
-function buildExplanations(
-  input: CalculationInput,
-  derived: ReturnType<typeof computeDerived>,
-  merged: PhaseResult,
-  preRet: PhaseResult,
-  postRet: PhaseResult,
-  finalFinancingValue: number,
-): string[] {
-  const lines: string[] = [];
-  lines.push(
-    `العمر ${derived.age} سنة، سنوات الخدمة الحالية ${derived.currentServiceYears}، المتبقي للتقاعد ${derived.remainingYearsToRetirement} سنة.`,
-  );
-  lines.push(
-    `الراتب التقاعدي التقديري = ${Math.round(derived.estimatedPensionSalary).toLocaleString("ar-SA")} ريال (حسبة: الأساسي × ${derived.totalServiceMonthsAtRetirement} ÷ ${POLICY.PENSION_DIVISOR}).`,
-  );
-  lines.push(merged.reason);
-  if (merged.exists) {
-    lines.push(
-      `سقف الخصم العقاري أثناء الدمج = ${((merged.deductionRate ?? 0) * 100).toFixed(1)}٪ (السقف الكلي ${(realEstateCeilingFor(input.netSalary) * 100).toFixed(0)}٪ مطروحًا منه نسبة الشخصي).`,
-    );
-  }
-  lines.push(preRet.reason);
-  lines.push(postRet.reason);
-  lines.push(
-    `قيمة التمويل النهائية = إجمالي الأقساط العقارية ÷ معامل التحويل (${input.conversionFactor}) = ${Math.round(finalFinancingValue).toLocaleString("ar-SA")} ريال.`,
-  );
-  return lines;
-}
-
 export function calculate(input: CalculationInput): CalculationResult {
   const { errors, warnings } = validate(input);
-
-  if (errors.length > 0) {
-    const emptyPhase: PhaseResult = {
-      exists: false,
-      months: 0,
-      years: 0,
-      totalInstallments: 0,
-      reason: "لم يتم الاحتساب بسبب أخطاء في الإدخال.",
-    };
-    return {
-      inputs: input,
-      derived: {
-        age: 0,
-        currentServiceYears: 0,
-        remainingYearsToRetirement: 0,
-        currentServiceMonths: 0,
-        remainingMonthsToRetirement: 0,
-        totalServiceMonthsAtRetirement: 0,
-        estimatedPensionSalary: 0,
-      },
-      personal: {
-        deductionRate: 0,
-        installment: 0,
-        grossTotal: 0,
-        netToCustomer: 0,
-        bankProfit: 0,
-      },
-      phases: {
-        merged: emptyPhase,
-        preRetirement: { ...emptyPhase },
-        postRetirement: { ...emptyPhase },
-      },
-      totals: {
-        totalRealEstateInstallments: 0,
-        finalFinancingValue: 0,
-        totalMonths: 0,
-        totalYears: 0,
-      },
-      validation: { ok: false, errors, warnings },
-      explanations: [],
-    };
-  }
+  const notes: string[] = [];
 
   const derived = computeDerived(input);
-  const path = routingPath(derived.remainingMonthsToRetirement);
 
-  const mergedInfo = mergedPhase(input);
-  const mergedYears = mergedInfo.phase.years;
-  const personal = personalLoan(
-    input,
-    mergedInfo.personalRate,
-    mergedInfo.personalMonths,
-  );
-  const preRet = preRetirementPhase(
-    input,
-    mergedYears,
-    mergedInfo.realEstateCeiling,
-    mergedInfo.phase.exists,
-  );
-  const postRet = postRetirementPhase(input, mergedYears, preRet.years);
+  const stage1 = computeStage1(input, derived);
+  const stage2 = computeStage2(input, derived, stage1);
+  const stage3 = computeStage3(derived, stage1, stage2);
 
-  const totalRealEstateInstallments =
-    mergedInfo.phase.totalInstallments +
-    preRet.totalInstallments +
-    postRet.totalInstallments;
-  const finalFinancingValue = totalRealEstateInstallments / input.conversionFactor;
-  const totalMonths = mergedInfo.phase.months + preRet.months + postRet.months;
-  const totalYears = totalMonths / 12;
+  const finalMortgageInstallmentsTotal =
+    (stage1.mortgageTotal || 0) +
+    (stage2.total || 0) +
+    (stage3.total || 0);
 
-  if (mergedYears + preRet.years + postRet.years > POLICY.MAX_TOTAL_YEARS) {
-    errors.push("مجموع المراحل يتجاوز 25 سنة — خلل منطقي في الحساب.");
-  }
+  const conversionFactor =
+    Number(input.conversionFactor) || POLICY.DEFAULT_CONVERSION_FACTOR;
+  const finalFinancingAmount =
+    conversionFactor > 0
+      ? finalMortgageInstallmentsTotal / conversionFactor
+      : 0;
 
-  const explanations = buildExplanations(
-    input,
-    derived,
-    mergedInfo.phase,
-    preRet,
-    postRet,
-    finalFinancingValue,
+  const totalDurationYears =
+    (stage1.mergedYears || 0) + (stage2.years || 0) + (stage3.years || 0);
+  const totalStagesCount =
+    (stage1.exists ? 1 : 0) +
+    (stage2.exists ? 1 : 0) +
+    (stage3.exists ? 1 : 0);
+
+  const { commitmentsTotal, commitmentsCount } = aggregateCommitments(
+    input.commitments,
   );
 
-  if (path === "DIRECT_TO_RETIREMENT") {
-    warnings.push(
-      "حالة حافة: المتبقي للتقاعد 18 شهرًا أو أقل — يرجى التحقق يدويًا.",
+  const suspensionsAgg = aggregateSuspensions(
+    !!input.hasSuspension,
+    input.suspensions,
+  );
+
+  const surplus = computeSurplus(input, finalFinancingAmount);
+  const coverage = computeCoverage(surplus.displaySurplus, suspensionsAgg);
+
+  // Notes
+  if (stage1.exists)
+    notes.push("مرحلة الدمج مفعّلة: تمويل شخصي + عقاري سوياً.");
+  if (!stage2.exists && !derived.isRetired && derived.yearsToRetirement > 0)
+    notes.push(
+      "لا توجد مرحلة عقاري منفرد قبل التقاعد - مرحلة الدمج استوعبت المدة.",
     );
-  }
+  if (stage3.exists)
+    notes.push(
+      `مرحلة التقاعد: ${stage3.years} سنة بقسط شهري ${Math.round(stage3.installment).toLocaleString("en-US")} ر.س.`,
+    );
+  if (commitmentsCount > 0)
+    notes.push(
+      `يوجد ${commitmentsCount} التزام بإجمالي ${Math.round(commitmentsTotal).toLocaleString("en-US")} ر.س.`,
+    );
+
+  // Warnings
+  if (derived.goesDirectToRetirement)
+    warnings.push(
+      "المدة المتبقية للتقاعد ≤ 18 شهر - تحويل مباشر لمرحلة التقاعد.",
+    );
+  if (surplus.hasDeficit)
+    warnings.push("التقييم أقل من سعر بيع المالك - لا يوجد فائض.");
+  if (suspensionsAgg.hasSuspension && !coverage.coversWithProfit)
+    warnings.push(
+      `فائض الشيك لا يغطي الإيقافات + 25% فائدة - العجز: ${Math.round(coverage.shortfallWithProfit).toLocaleString("en-US")} ر.س.`,
+    );
 
   return {
     inputs: input,
-    derived,
-    personal,
-    phases: {
-      merged: mergedInfo.phase,
-      preRetirement: preRet,
-      postRetirement: postRet,
-    },
-    totals: {
-      totalRealEstateInstallments,
-      finalFinancingValue,
-      totalMonths,
-      totalYears,
-    },
-    validation: { ok: errors.length === 0, errors, warnings },
-    explanations,
+
+    errors,
+    warnings,
+    notes,
+
+    age: derived.age,
+    currentServiceYears: derived.currentServiceYears,
+    currentServiceMonths: derived.currentServiceMonths,
+    yearsToRetirement: derived.yearsToRetirement,
+    monthsToRetirement: derived.monthsToRetirement,
+    totalRetirementServiceMonths: derived.totalRetirementServiceMonths,
+
+    retirementSalary: derived.retirementSalary,
+    isRetired: derived.isRetired,
+    goesDirectToRetirement: derived.goesDirectToRetirement,
+    personalRate: derived.personalRate,
+    mortgageCap: derived.mortgageCap,
+    retirementMortgageCap: derived.retirementMortgageCap,
+
+    stage1,
+    stage2,
+    stage3,
+
+    finalMortgageInstallmentsTotal,
+    conversionFactor,
+    finalFinancingAmount,
+    totalDurationYears,
+    totalStagesCount,
+
+    commitmentsTotal,
+    commitmentsCount,
+
+    hasSuspension: suspensionsAgg.hasSuspension,
+    suspensionsActualTotal: suspensionsAgg.suspensionsActualTotal,
+    suspensionsBondsTotal: suspensionsAgg.suspensionsBondsTotal,
+    suspensionPayoffProfit: suspensionsAgg.suspensionPayoffProfit,
+    suspensionTotalRequirement: suspensionsAgg.suspensionTotalRequirement,
+
+    ownerSalePrice: surplus.ownerSalePrice,
+    financingValuation: surplus.financingValuation,
+    propertyValue: surplus.propertyValue,
+    theoreticalSurplus: surplus.theoreticalSurplus,
+    hasDeficit: surplus.hasDeficit,
+    displaySurplus: surplus.displaySurplus,
+    usableSurplus: surplus.usableSurplus,
+
+    coversActual: coverage.coversActual,
+    coversWithProfit: coverage.coversWithProfit,
+    remainingAfterSuspension: coverage.remainingAfterSuspension,
+    shortfallActual: coverage.shortfallActual,
+    shortfallWithProfit: coverage.shortfallWithProfit,
+
+    firstPayment: surplus.firstPayment,
+    firstPaymentRate: surplus.firstPaymentRate,
+  };
+}
+
+// Backwards-compat default input factory used by the UI.
+export function defaultInput(): CalculationInput {
+  return {
+    customerName: "",
+    mobile: "",
+    birthYear: 1985,
+    hireYear: 2010,
+    currentYear: new Date().getFullYear(),
+    jobType: "مدني",
+    employmentStatus: "active",
+    basicSalary: 12000,
+    netSalary: 16000,
+    personalDiscountRate: POLICY.DEFAULT_PERSONAL_DISCOUNT,
+    conversionFactor: POLICY.DEFAULT_CONVERSION_FACTOR,
+    ownerSalePrice: 1000000,
+    financingValuation: 1150000,
+    propertyValue: 1000000,
+    targetFinancing: "",
+    targetInstallment: "",
+    targetDuration: "",
+    targetFirstPayment: "",
+    commitments: [],
+    hasSuspension: false,
+    suspensions: [],
+    mode: "customer_driven",
   };
 }

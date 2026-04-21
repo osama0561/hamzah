@@ -12,7 +12,8 @@ html,
 body {
   background-color: #ffffff;
   color: var(--color-navy);
-  font-family: "Tajawal", "Cairo", system-ui, -apple-system, sans-serif;
+  font-family: "Readex Pro", "Tajawal", "Cairo", system-ui, -apple-system,
+    sans-serif;
 }
 
 * {
@@ -21,12 +22,25 @@ body {
 
 input,
 select,
-button {
+button,
+textarea {
   font-family: inherit;
+}
+
+.num-font {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  direction: ltr;
+  unicode-bidi: isolate;
+  display: inline-block;
 }
 
 .fade-in {
   animation: fadeIn 180ms ease-out both;
+}
+
+.flash-amber {
+  animation: flashAmber 420ms ease-out both;
 }
 
 @keyframes fadeIn {
@@ -38,4 +52,43 @@ button {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+@keyframes flashAmber {
+  0% {
+    background-color: rgba(251, 191, 36, 0);
+  }
+  35% {
+    background-color: rgba(251, 191, 36, 0.25);
+  }
+  100% {
+    background-color: rgba(251, 191, 36, 0);
+  }
+}
+
+/* Print styles per spec §10 */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .page-break {
+    page-break-before: always;
+  }
+  body {
+    background: #fff;
+  }
+  aside,
+  nav {
+    display: none !important;
+  }
+  main {
+    max-width: none !important;
+  }
+}
+
+.print-only {
+  display: none;
 }
