@@ -1,188 +1,135 @@
 import { POLICY } from "./constants";
-import {
-  computeDerived,
-  personalDeductionRateFor,
-  realEstateCeilingFor,
-} from "./derived";
-import type {
-  CalculationInput,
-  PersonalLoanBreakdown,
-  PhaseResult,
-} from "./types";
+import type { DerivedBasics } from "./derived";
+import type { CalculationInput, Stage1, Stage2, Stage3 } from "./types";
 
-export type RoutingPath = "MERGED_FIRST" | "DIRECT_TO_RETIREMENT";
+export function computeStage1(
+  input: CalculationInput,
+  derived: DerivedBasics,
+): Stage1 {
+  const netSalary = Number(input.netSalary) || 0;
 
-export function routingPath(
-  remainingMonthsToRetirement: number,
-): RoutingPath {
-  return remainingMonthsToRetirement <= POLICY.DIRECT_RETIREMENT_THRESHOLD_MONTHS
-    ? "DIRECT_TO_RETIREMENT"
-    : "MERGED_FIRST";
-}
-
-export function mergedPhase(input: CalculationInput): {
-  phase: PhaseResult;
-  personalRate: number;
-  realEstateCeiling: number;
-  realEstateRateDuringMerge: number;
-  personalMonths: number;
-} {
-  const { remainingYearsToRetirement, remainingMonthsToRetirement } =
-    computeDerived(input);
-  const realEstateCeiling = realEstateCeilingFor(input.netSalary);
-
-  const exists =
-    remainingMonthsToRetirement > POLICY.DIRECT_RETIREMENT_THRESHOLD_MONTHS;
-  if (!exists) {
-    // Direct-to-retirement path: no merged real-estate phase, and personal
-    // loan is computed at the retired rate (25%) over whatever remains until
-    // retirement — per spec: "يحسب له شخصي باستقطاع 25% شخصي".
+  if (derived.isRetired || derived.yearsToRetirement === 0) {
     return {
-      phase: {
-        exists: false,
-        months: 0,
-        years: 0,
-        totalInstallments: 0,
-        reason:
-          "لا توجد مرحلة دمج — المتبقي للتقاعد 18 شهرًا أو أقل، ينتقل العميل مباشرة لمرحلة التقاعد ويُحسب الشخصي باستقطاع 25٪.",
-      },
-      personalRate: POLICY.PERSONAL_DEDUCTION_RATE_RETIRED,
-      realEstateCeiling,
-      realEstateRateDuringMerge: 0,
-      personalMonths: remainingMonthsToRetirement,
+      exists: false,
+      reason: "العميل متقاعد أو في حكم المتقاعد - لا توجد مرحلة دمج.",
+      mergedYears: 0,
+      mergedMonths: 0,
+      personalRate: 0,
+      personalInstallment: 0,
+      personalGrossTotal: 0,
+      personalNetFinance: 0,
+      personalBankProfits: 0,
+      personalTotalWithProfits: 0,
+      mortgageRate: 0,
+      mortgageInstallment: 0,
+      mortgageTotal: 0,
     };
   }
 
-  const personalRate = personalDeductionRateFor(input.status);
-  const mergedYears = Math.min(
-    remainingYearsToRetirement,
-    POLICY.MAX_MERGED_YEARS,
-  );
+  const mergedYears = Math.min(derived.yearsToRetirement, POLICY.MAX_MERGED_YEARS);
   const mergedMonths = mergedYears * 12;
-  const realEstateRateDuringMerge = Math.max(
-    0,
-    realEstateCeiling - personalRate,
-  );
-  const installment = input.netSalary * realEstateRateDuringMerge;
-  const total = installment * mergedMonths;
+
+  const personalRate = derived.personalRate;
+  const personalInstallment = netSalary * personalRate;
+  const personalGrossTotal = personalInstallment * mergedMonths;
+
+  const personalDiscount =
+    input.personalDiscountRate !== undefined
+      ? Number(input.personalDiscountRate)
+      : POLICY.DEFAULT_PERSONAL_DISCOUNT;
+  const personalNetFinance = personalGrossTotal * (1 - personalDiscount);
+  const personalBankProfits = personalGrossTotal - personalNetFinance;
+
+  const mortgageRate = Math.max(0, derived.mortgageCap - personalRate);
+  const mortgageInstallment = netSalary * mortgageRate;
+  const mortgageTotal = mortgageInstallment * mergedMonths;
 
   return {
-    phase: {
-      exists: true,
-      months: mergedMonths,
-      years: mergedYears,
-      deductionRate: realEstateRateDuringMerge,
-      installment,
-      totalInstallments: total,
-      reason: `مدة الدمج ${mergedYears} سنة (الحد الأدنى بين المتبقي للتقاعد ${remainingYearsToRetirement} سنة والسقف ${POLICY.MAX_MERGED_YEARS} سنوات).`,
-    },
+    exists: mergedYears > 0,
+    reason: `أقل قيمة بين السنوات المتبقية للتقاعد (${derived.yearsToRetirement}) والحد الأقصى لمرحلة الدمج (${POLICY.MAX_MERGED_YEARS})`,
+    mergedYears,
+    mergedMonths,
     personalRate,
-    realEstateCeiling,
-    realEstateRateDuringMerge,
-    personalMonths: mergedMonths,
+    personalInstallment,
+    personalGrossTotal,
+    personalNetFinance,
+    personalBankProfits,
+    personalTotalWithProfits: personalGrossTotal,
+    mortgageRate,
+    mortgageInstallment,
+    mortgageTotal,
   };
 }
 
-export function personalLoan(
+export function computeStage2(
   input: CalculationInput,
-  personalRate: number,
-  mergedMonths: number,
-): PersonalLoanBreakdown {
-  const installment = input.netSalary * personalRate;
-  const grossTotal = installment * mergedMonths;
-  const netToCustomer = grossTotal * (1 - POLICY.PERSONAL_DISCOUNT_RATE);
-  const bankProfit = grossTotal - netToCustomer;
-  return {
-    deductionRate: personalRate,
-    installment,
-    grossTotal,
-    netToCustomer,
-    bankProfit,
-  };
-}
+  derived: DerivedBasics,
+  stage1: Stage1,
+): Stage2 {
+  const netSalary = Number(input.netSalary) || 0;
 
-export function preRetirementPhase(
-  input: CalculationInput,
-  mergedYears: number,
-  realEstateCeiling: number,
-  mergedExists: boolean,
-): PhaseResult {
-  const { remainingYearsToRetirement } = computeDerived(input);
-  const remainingAfterMerge = remainingYearsToRetirement - mergedYears;
-
-  // Direct-to-retirement path: spec says the customer goes straight to
-  // post-retirement — no interim phase.
-  if (!mergedExists) {
+  if (derived.isRetired || derived.yearsToRetirement === 0) {
     return {
       exists: false,
-      months: 0,
+      reason: "العميل متقاعد أو في حكم المتقاعد - لا توجد مرحلة قبل التقاعد.",
       years: 0,
-      totalInstallments: 0,
-      reason:
-        "لا توجد مرحلة ثانية — المسار المباشر للتقاعد يتجاوز المرحلة الثانية.",
+      months: 0,
+      rate: 0,
+      installment: 0,
+      total: 0,
     };
   }
 
-  if (remainingAfterMerge < 1) {
-    return {
-      exists: false,
-      months: 0,
-      years: 0,
-      totalInstallments: 0,
-      reason:
-        "لا توجد مرحلة ثانية — المتبقي بعد الدمج أقل من سنة، يتحول العميل مباشرة لمرحلة التقاعد.",
-    };
-  }
-
-  const months = remainingAfterMerge * 12;
-  const installment = input.netSalary * realEstateCeiling;
-  const total = installment * months;
-
-  return {
-    exists: true,
-    months,
-    years: remainingAfterMerge,
-    deductionRate: realEstateCeiling,
-    installment,
-    totalInstallments: total,
-    reason: `المرحلة الثانية ${remainingAfterMerge} سنة (المتبقي للتقاعد ${remainingYearsToRetirement} سنة مطروحًا منه مدة الدمج ${mergedYears} سنة).`,
-  };
-}
-
-export function postRetirementPhase(
-  input: CalculationInput,
-  mergedYears: number,
-  preRetirementYears: number,
-): PhaseResult {
-  const { estimatedPensionSalary } = computeDerived(input);
-  const postRetirementYears = Math.max(
+  const remainingBeforeRetirement = Math.max(
     0,
-    POLICY.MAX_TOTAL_YEARS - mergedYears - preRetirementYears,
+    derived.yearsToRetirement - stage1.mergedYears,
   );
-  const months = postRetirementYears * 12;
-
-  if (postRetirementYears === 0) {
-    return {
-      exists: false,
-      months: 0,
-      years: 0,
-      totalInstallments: 0,
-      reason:
-        "لا توجد مرحلة تقاعد — تم استهلاك السقف الكلي 25 سنة قبل التقاعد.",
-    };
-  }
-
-  const pensionRate = realEstateCeilingFor(estimatedPensionSalary);
-  const installment = estimatedPensionSalary * pensionRate;
+  const years = remainingBeforeRetirement >= 1 ? remainingBeforeRetirement : 0;
+  const months = years * 12;
+  const rate = derived.mortgageCap;
+  const installment = netSalary * rate;
   const total = installment * months;
 
   return {
-    exists: true,
+    exists: years > 0,
+    reason:
+      years > 0
+        ? `سنوات متبقية قبل التقاعد بعد مرحلة الدمج = ${years} سنة`
+        : "لا توجد سنة كاملة متبقية قبل التقاعد بعد مرحلة الدمج",
+    years,
     months,
-    years: postRetirementYears,
-    deductionRate: pensionRate,
+    rate,
     installment,
-    totalInstallments: total,
-    reason: `مدة التقاعد ${postRetirementYears} سنة (السقف الكلي ${POLICY.MAX_TOTAL_YEARS} سنة مطروحًا منه مدة الدمج ${mergedYears} ومدة ما قبل التقاعد ${preRetirementYears}).`,
+    total,
+  };
+}
+
+export function computeStage3(
+  derived: DerivedBasics,
+  stage1: Stage1,
+  stage2: Stage2,
+): Stage3 {
+  const usedYears = (stage1.mergedYears || 0) + (stage2.years || 0);
+  const years = Math.max(0, POLICY.MAX_TOTAL_YEARS - usedYears);
+  const months = years * 12;
+  const rate = derived.retirementMortgageCap;
+  const installment = derived.retirementSalary * rate;
+  const total = installment * months;
+
+  const exists = years > 0 && derived.retirementSalary > 0;
+  const reason =
+    years > 0
+      ? `${POLICY.MAX_TOTAL_YEARS} − (${usedYears}) = ${years} سنة، لضمان عدم تجاوز ${POLICY.MAX_TOTAL_YEARS} سنة إجمالي.`
+      : "تم استنفاد الحد الأقصى (25 سنة) في المرحلتين السابقتين";
+
+  return {
+    exists,
+    reason,
+    years,
+    months,
+    rate,
+    installment,
+    total,
+    retirementSalary: derived.retirementSalary,
   };
 }

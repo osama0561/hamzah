@@ -12,3 +12,6 @@ build
 .turbo
 .vercel
 next-env.d.ts
+
+# TypeScript build info
+tsconfig.tsbuildinfo

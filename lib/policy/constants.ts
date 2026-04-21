@@ -11,8 +11,15 @@ export const POLICY = {
   REAL_ESTATE_CEILING_LOW_SALARY: 0.55,
   SALARY_CEILING_BREAKPOINT: 15000,
 
-  // TODO: CONFIRM 17% WITH CEO before shipping. Flagged in README.
-  PERSONAL_DISCOUNT_RATE: 0.17,
+  // Per prospect spec §3: default personal discount rate.
+  // CEO's original hand-calculated case uses 0.17 — callers must pass
+  // personalDiscountRate: 0.17 explicitly to reproduce that sheet.
+  DEFAULT_PERSONAL_DISCOUNT: 0.30,
 
   PENSION_DIVISOR: 480,
+
+  // Bank fee added on top of suspension payoff (25%). Spec §3.
+  SUSPENSION_PROFIT_RATE: 0.25,
+
+  DEFAULT_CONVERSION_FACTOR: 2.16,
 } as const;
